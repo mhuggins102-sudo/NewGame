@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rinku — Loop Distance Puzzle</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root { --accent: #ff8a5c; --cols: 5; --rows: 5; }
+    .btn--primary { background: var(--accent); border-color: var(--accent); }
+    .btn--primary:hover { background: #e0764e; }
+    h1 { color: var(--accent); }
+
+    .board-wrap {
+      position: relative;
+      display: inline-block;
+      margin: 16px 0;
+    }
+    .puzzle-grid { pointer-events: none; position: relative; z-index: 1; }
+    .cell { pointer-events: none; }
+    .cell--on-loop { background: rgba(255,138,92,0.1); }
+
+    .num-circle {
+      width: 70%; height: 70%; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem; font-weight: 700; color: #fff;
+    }
+
+    svg.overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 2; pointer-events: none;
+    }
+    svg.overlay .edge-hit { pointer-events: all; cursor: pointer; fill: transparent; }
+    svg.overlay .edge-hit:hover { fill: rgba(255,255,255,0.06); }
+    svg.overlay .edge-line {
+      stroke: rgba(255,255,255,0.7); stroke-width: 5;
+      stroke-linecap: round; pointer-events: none;
+    }
+    svg.overlay .edge-preview {
+      stroke: rgba(255,255,255,0.25); stroke-width: 3;
+      stroke-dasharray: 6 4; stroke-linecap: round; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="index.html" class="back-link">← Back to puzzles</a>
+  <h1>Rinku</h1>
+  <p class="subtitle">Loop distance puzzle</p>
+
+  <div class="instructions">
+    Draw a single closed loop through the grid by clicking between adjacent cells to toggle path segments.
+    The loop must visit every numbered cell. Between consecutive same-colored numbers on the loop,
+    the number of steps must equal their value. Each cell is either off the loop or has exactly 2 connections.
+  </div>
+
+  <div class="board-wrap" id="board-wrap">
+    <div class="puzzle-grid" id="grid"></div>
+    <svg class="overlay" id="svg"></svg>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn--primary" onclick="check()">Check</button>
+    <button class="btn" onclick="reset()">Reset</button>
+  </div>
+  <div class="status-bar" id="status"></div>
+</div>
+
+<script>
+const ROWS = 5, COLS = 5;
+const RED = '#e94560', BLUE = '#4ecdc4';
+// Clues: [row, col, color, number]
+const CLUES = [
+  [0,1,RED,4],[0,3,BLUE,6],
+  [2,0,BLUE,6],[2,4,RED,4],
+  [4,1,RED,4],[4,3,BLUE,6]
+];
+const clueMap = {};
+CLUES.forEach(c => clueMap[c[0]+','+c[1]] = { color: c[2], num: c[3] });
+
+const edges = new Set();
+let cellSize;
+
+function edgeKey(r1,c1,r2,c2) {
+  const a = r1+','+c1, b = r2+','+c2;
+  return a < b ? a+'-'+b : b+'-'+a;
+}
+
+function getNeighbors(r,c) {
+  const n = [];
+  if (r > 0) n.push([r-1,c]);
+  if (r < ROWS-1) n.push([r+1,c]);
+  if (c > 0) n.push([r,c-1]);
+  if (c < COLS-1) n.push([r,c+1]);
+  return n;
+}
+
+function cellConnections(r,c) {
+  let count = 0;
+  for (const [nr,nc] of getNeighbors(r,c)) {
+    if (edges.has(edgeKey(r,c,nr,nc))) count++;
+  }
+  return count;
+}
+
+function connectedNeighbors(r,c) {
+  const res = [];
+  for (const [nr,nc] of getNeighbors(r,c)) {
+    if (edges.has(edgeKey(r,c,nr,nc))) res.push([nr,nc]);
+  }
+  return res;
+}
+
+function buildGrid() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.id = 'cell-'+r+'-'+c;
+      const cl = clueMap[r+','+c];
+      if (cl) {
+        const circle = document.createElement('div');
+        circle.className = 'num-circle';
+        circle.style.background = cl.color;
+        circle.textContent = cl.num;
+        cell.appendChild(circle);
+      }
+      grid.appendChild(cell);
+    }
+  }
+  cellSize = document.querySelector('.cell').getBoundingClientRect().width;
+}
+
+function buildSVG() {
+  const svg = document.getElementById('svg');
+  svg.innerHTML = '';
+  const cs = cellSize;
+  const w = COLS * cs, h = ROWS * cs;
+  svg.setAttribute('viewBox', '0 0 '+w+' '+h);
+
+  // Horizontal edge hit zones
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS - 1; c++) {
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('x', (c+0.5)*cs - cs*0.15);
+      rect.setAttribute('y', r*cs + cs*0.2);
+      rect.setAttribute('width', cs*0.3 + cs);
+      // fix: narrower hit zone
+      rect.setAttribute('x', (c+0.35)*cs);
+      rect.setAttribute('width', cs*0.3);
+      rect.setAttribute('y', r*cs + cs*0.15);
+      rect.setAttribute('height', cs*0.7);
+      rect.classList.add('edge-hit');
+      rect.dataset.edge = edgeKey(r,c,r,c+1);
+      rect.dataset.r1=r; rect.dataset.c1=c; rect.dataset.r2=r; rect.dataset.c2=c+1;
+      rect.addEventListener('click', onEdgeClick);
+      rect.addEventListener('mouseenter', onEdgeEnter);
+      rect.addEventListener('mouseleave', onEdgeLeave);
+      svg.appendChild(rect);
+    }
+  }
+  // Vertical edge hit zones
+  for (let r = 0; r < ROWS - 1; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('x', c*cs + cs*0.15);
+      rect.setAttribute('y', (r+0.35)*cs);
+      rect.setAttribute('width', cs*0.7);
+      rect.setAttribute('height', cs*0.3);
+      rect.classList.add('edge-hit');
+      rect.dataset.edge = edgeKey(r,c,r+1,c);
+      rect.dataset.r1=r; rect.dataset.c1=c; rect.dataset.r2=r+1; rect.dataset.c2=c;
+      rect.addEventListener('click', onEdgeClick);
+      rect.addEventListener('mouseenter', onEdgeEnter);
+      rect.addEventListener('mouseleave', onEdgeLeave);
+      svg.appendChild(rect);
+    }
+  }
+}
+
+function cx(c) { return (c+0.5)*cellSize; }
+function cy(r) { return (r+0.5)*cellSize; }
+
+function onEdgeClick(e) {
+  const key = e.currentTarget.dataset.edge;
+  if (edges.has(key)) edges.delete(key); else edges.add(key);
+  clearStatus();
+  renderEdges();
+}
+
+let previewLine = null;
+function onEdgeEnter(e) {
+  const d = e.currentTarget.dataset;
+  const svg = document.getElementById('svg');
+  previewLine = document.createElementNS('http://www.w3.org/2000/svg','line');
+  previewLine.classList.add('edge-preview');
+  previewLine.setAttribute('x1', cx(+d.c1)); previewLine.setAttribute('y1', cy(+d.r1));
+  previewLine.setAttribute('x2', cx(+d.c2)); previewLine.setAttribute('y2', cy(+d.r2));
+  if (edges.has(d.edge)) previewLine.style.display = 'none';
+  svg.appendChild(previewLine);
+}
+function onEdgeLeave() {
+  if (previewLine) { previewLine.remove(); previewLine = null; }
+}
+
+function renderEdges() {
+  document.querySelectorAll('.edge-line').forEach(l => l.remove());
+  const svg = document.getElementById('svg');
+  for (const key of edges) {
+    const [a,b] = key.split('-');
+    const [r1,c1] = a.split(',').map(Number);
+    const [r2,c2] = b.split(',').map(Number);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.classList.add('edge-line');
+    line.setAttribute('x1', cx(c1)); line.setAttribute('y1', cy(r1));
+    line.setAttribute('x2', cx(c2)); line.setAttribute('y2', cy(r2));
+    svg.appendChild(line);
+  }
+  // Highlight cells on loop
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.getElementById('cell-'+r+'-'+c);
+      cell.classList.toggle('cell--on-loop', cellConnections(r,c) === 2);
+      cell.classList.remove('cell--error','cell--success');
+    }
+  }
+}
+
+function check() {
+  clearStatus();
+  // 1. Every cell must have 0 or 2 connections
+  const onLoop = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const conn = cellConnections(r,c);
+      if (conn !== 0 && conn !== 2) return fail('Each cell must have exactly 0 or 2 connections.');
+      if (conn === 2) onLoop.push([r,c]);
+    }
+  }
+  if (onLoop.length === 0) return fail('No loop drawn.');
+
+  // 2. Trace single closed loop
+  const visited = new Set();
+  let [sr, sc] = onLoop[0];
+  let pr = -1, pc = -1, cr = sr, cc = sc;
+  const loopOrder = [];
+  do {
+    visited.add(cr+','+cc);
+    loopOrder.push([cr,cc]);
+    const nbrs = connectedNeighbors(cr,cc);
+    let next = null;
+    for (const [nr,nc] of nbrs) {
+      if (nr === pr && nc === pc) continue;
+      next = [nr,nc];
+      break;
+    }
+    if (!next) return fail('Loop tracing failed.');
+    pr = cr; pc = cc;
+    [cr, cc] = next;
+  } while (cr !== sr || cc !== sc);
+
+  if (visited.size !== onLoop.length) return fail('There must be a single connected loop (no branches).');
+
+  // 3. All numbered cells must be on the loop
+  for (const clue of CLUES) {
+    if (!visited.has(clue[0]+','+clue[1])) return fail('All numbered cells must be on the loop.');
+  }
+
+  // 4. Distance constraints — walk loop, record positions of colored numbers
+  const posMap = {}; // "color" -> [{idx, num}]
+  for (let i = 0; i < loopOrder.length; i++) {
+    const key = loopOrder[i][0]+','+loopOrder[i][1];
+    const cl = clueMap[key];
+    if (cl) {
+      if (!posMap[cl.color]) posMap[cl.color] = [];
+      posMap[cl.color].push({ idx: i, num: cl.num });
+    }
+  }
+
+  for (const color in posMap) {
+    const list = posMap[color];
+    if (list.length < 2) continue;
+    const len = loopOrder.length;
+    for (let i = 0; i < list.length; i++) {
+      const cur = list[i];
+      const nxt = list[(i+1) % list.length];
+      const dist = nxt.idx > cur.idx
+        ? nxt.idx - cur.idx
+        : len - cur.idx + nxt.idx;
+      if (dist !== cur.num) {
+        const cname = color === RED ? 'red' : 'blue';
+        return fail('Distance between consecutive '+cname+' numbers must equal their value (found '+dist+', expected '+cur.num+').');
+      }
+    }
+  }
+
+  // Success
+  showStatus('Congratulations! Puzzle solved!', true);
+  for (const [r,c] of onLoop) {
+    document.getElementById('cell-'+r+'-'+c).classList.add('cell--success');
+  }
+}
+
+function fail(msg) {
+  showStatus(msg, false);
+}
+
+function showStatus(msg, success) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status-bar ' + (success ? 'status-bar--success' : 'status-bar--error');
+}
+
+function clearStatus() {
+  const el = document.getElementById('status');
+  el.className = 'status-bar';
+  el.textContent = '';
+}
+
+function reset() {
+  edges.clear();
+  clearStatus();
+  renderEdges();
+}
+
+// Init
+buildGrid();
+buildSVG();
+</script>
+</body>
+</html>
