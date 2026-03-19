@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Star Bridge — Bridge-Connecting Puzzle</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root { --accent: #a78bfa; }
+    .btn--primary { background: var(--accent); border-color: var(--accent); }
+    .btn--primary:hover { background: #9271e6; }
+    h1 { color: var(--accent); }
+
+    .puzzle-wrap {
+      margin: 16px 0;
+      display: flex;
+      justify-content: center;
+    }
+    .puzzle-wrap svg {
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+      background: var(--card-bg);
+      border: 2px solid var(--accent);
+    }
+    .grid-line { stroke: #1a1a4e; stroke-width: 0.5; }
+    .dot {
+      cursor: pointer;
+      transition: filter 0.15s;
+    }
+    .dot:hover .dot-ring { opacity: 0.3; }
+    .dot-fill { fill: var(--cell-bg); stroke: var(--accent); stroke-width: 1.5; }
+    .dot-text {
+      fill: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: none;
+    }
+    .dot-ring {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .dot.selected .dot-ring {
+      opacity: 0.8;
+      animation: glow-pulse 1s ease-in-out infinite alternate;
+    }
+    @keyframes glow-pulse {
+      from { stroke-width: 2; opacity: 0.6; }
+      to   { stroke-width: 3.5; opacity: 1; }
+    }
+    .bridge { stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; cursor: pointer; }
+    .bridge:hover { stroke: #c4b5fd; stroke-width: 3.5; }
+    .dot--error .dot-fill { stroke: var(--error); }
+    .dot--success .dot-fill { stroke: var(--success); }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="index.html" class="back-link">&#8592; Back to games</a>
+  <h1>Star Bridge</h1>
+  <p class="subtitle">Connect the dots with bridges</p>
+
+  <div class="instructions">
+    <strong>How to play:</strong> Click a numbered dot to select it, then click another dot
+    to draw a bridge between them. Bridges must be horizontal or vertical, with no other dots
+    in between. Click connected dots again to add a second (double) bridge; click a third time
+    to remove all bridges between them. Each numbered dot must have exactly that many bridges
+    touching it. Press <strong>Check</strong> to validate your solution.
+  </div>
+
+  <div class="controls">
+    <button class="btn btn--primary" onclick="checkSolution()">Check</button>
+    <button class="btn" onclick="resetPuzzle()">Reset</button>
+  </div>
+
+  <div id="status" class="status-bar"></div>
+
+  <div class="puzzle-wrap">
+    <svg id="board" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+</div>
+
+<script>
+// ── Puzzle Data ──
+// Dots as {row, col, count}
+const DOTS = [
+  { row: 0, col: 0, count: 2 },
+  { row: 0, col: 3, count: 2 },
+  { row: 1, col: 1, count: 4 },
+  { row: 1, col: 2, count: 2 },
+  { row: 3, col: 0, count: 1 },
+  { row: 3, col: 3, count: 2 },
+];
+
+const GRID_ROWS = 4;
+const GRID_COLS = 4;
+const PADDING = 30;
+const CELL = 40;
+const DOT_R = 14;
+
+// ── State ──
+let selected = null;          // index into DOTS or null
+let bridges = [];             // [{a, b, count}]  a < b (indices into DOTS)
+
+// ── Helpers ──
+function dotX(d) { return PADDING + d.col * CELL; }
+function dotY(d) { return PADDING + d.row * CELL; }
+
+function dotAt(row, col) {
+  return DOTS.findIndex(d => d.row === row && d.col === col);
+}
+
+// Check if two dots are in same row/col with no other dot between them
+function canConnect(ai, bi) {
+  const a = DOTS[ai], b = DOTS[bi];
+  if (a.row === b.row) {
+    const minC = Math.min(a.col, b.col);
+    const maxC = Math.max(a.col, b.col);
+    for (let c = minC + 1; c < maxC; c++) {
+      if (dotAt(a.row, c) !== -1) return false;
+    }
+    return true;
+  }
+  if (a.col === b.col) {
+    const minR = Math.min(a.row, b.row);
+    const maxR = Math.max(a.row, b.row);
+    for (let r = minR + 1; r < maxR; r++) {
+      if (dotAt(r, a.col) !== -1) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function findBridge(ai, bi) {
+  const lo = Math.min(ai, bi), hi = Math.max(ai, bi);
+  return bridges.findIndex(b => b.a === lo && b.b === hi);
+}
+
+function bridgeCountFor(di) {
+  let total = 0;
+  for (const b of bridges) {
+    if (b.a === di || b.b === di) total += b.count;
+  }
+  return total;
+}
+
+// ── Rendering ──
+const svg = document.getElementById('board');
+const NS = 'http://www.w3.org/2000/svg';
+
+function el(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+
+function render() {
+  svg.innerHTML = '';
+
+  const w = PADDING * 2 + (GRID_COLS - 1) * CELL;
+  const h = PADDING * 2 + (GRID_ROWS - 1) * CELL;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+  // Grid lines
+  for (let r = 0; r < GRID_ROWS; r++) {
+    svg.appendChild(el('line', {
+      x1: PADDING, y1: PADDING + r * CELL,
+      x2: PADDING + (GRID_COLS - 1) * CELL, y2: PADDING + r * CELL,
+      class: 'grid-line'
+    }));
+  }
+  for (let c = 0; c < GRID_COLS; c++) {
+    svg.appendChild(el('line', {
+      x1: PADDING + c * CELL, y1: PADDING,
+      x2: PADDING + c * CELL, y2: PADDING + (GRID_ROWS - 1) * CELL,
+      class: 'grid-line'
+    }));
+  }
+
+  // Bridges
+  bridges.forEach((br, bi) => {
+    const da = DOTS[br.a], db = DOTS[br.b];
+    const x1 = dotX(da), y1 = dotY(da);
+    const x2 = dotX(db), y2 = dotY(db);
+
+    if (br.count === 1) {
+      const line = el('line', { x1, y1, x2, y2, class: 'bridge' });
+      line.addEventListener('click', (e) => { e.stopPropagation(); removeBridge(bi); });
+      svg.appendChild(line);
+    } else if (br.count === 2) {
+      const isH = da.row === db.row;
+      const off = 3;
+      const dx = isH ? 0 : off;
+      const dy = isH ? off : 0;
+      const g = el('g', {});
+      const l1 = el('line', { x1: x1 - dx, y1: y1 - dy, x2: x2 - dx, y2: y2 - dy, class: 'bridge' });
+      const l2 = el('line', { x1: x1 + dx, y1: y1 + dy, x2: x2 + dx, y2: y2 + dy, class: 'bridge' });
+      l1.addEventListener('click', (e) => { e.stopPropagation(); removeBridge(bi); });
+      l2.addEventListener('click', (e) => { e.stopPropagation(); removeBridge(bi); });
+      g.appendChild(l1);
+      g.appendChild(l2);
+      svg.appendChild(g);
+    }
+  });
+
+  // Dots
+  DOTS.forEach((d, i) => {
+    const cx = dotX(d), cy = dotY(d);
+    const g = el('g', { class: 'dot' + (i === selected ? ' selected' : '') });
+
+    g.appendChild(el('circle', { cx, cy, r: DOT_R + 4, class: 'dot-ring' }));
+    g.appendChild(el('circle', { cx, cy, r: DOT_R, class: 'dot-fill' }));
+    g.appendChild(Object.assign(el('text', { x: cx, y: cy, class: 'dot-text' }),
+      { textContent: d.count }));
+
+    g.addEventListener('click', (e) => { e.stopPropagation(); onDotClick(i); });
+    svg.appendChild(g);
+  });
+}
+
+// ── Interaction ──
+function onDotClick(i) {
+  clearStatus();
+  if (selected === null) {
+    selected = i;
+  } else if (selected === i) {
+    selected = null;
+  } else {
+    if (canConnect(selected, i)) {
+      toggleBridge(selected, i);
+    }
+    selected = null;
+  }
+  render();
+}
+
+function toggleBridge(ai, bi) {
+  const lo = Math.min(ai, bi), hi = Math.max(ai, bi);
+  const idx = findBridge(lo, hi);
+  if (idx === -1) {
+    bridges.push({ a: lo, b: hi, count: 1 });
+  } else if (bridges[idx].count === 1) {
+    bridges[idx].count = 2;
+  } else {
+    bridges.splice(idx, 1);
+  }
+}
+
+function removeBridge(bi) {
+  clearStatus();
+  bridges.splice(bi, 1);
+  selected = null;
+  render();
+}
+
+// ── Check / Reset ──
+function checkSolution() {
+  selected = null;
+  let allCorrect = true;
+
+  render();
+
+  // After render, mark dots
+  const dotGroups = svg.querySelectorAll('.dot');
+  DOTS.forEach((d, i) => {
+    const actual = bridgeCountFor(i);
+    const g = dotGroups[i];
+    if (actual === d.count) {
+      g.classList.add('dot--success');
+    } else {
+      g.classList.add('dot--error');
+      allCorrect = false;
+    }
+  });
+
+  const bar = document.getElementById('status');
+  if (allCorrect) {
+    bar.className = 'status-bar status-bar--success';
+    bar.textContent = 'Solved! All bridges are correct.';
+  } else {
+    bar.className = 'status-bar status-bar--error';
+    bar.textContent = 'Not quite — some dots have the wrong number of bridges.';
+  }
+}
+
+function resetPuzzle() {
+  bridges = [];
+  selected = null;
+  clearStatus();
+  render();
+}
+
+function clearStatus() {
+  const bar = document.getElementById('status');
+  bar.className = 'status-bar';
+  bar.textContent = '';
+}
+
+// Deselect on background click
+document.getElementById('board').addEventListener('click', () => {
+  if (selected !== null) {
+    selected = null;
+    clearStatus();
+    render();
+  }
+});
+
+// ── Init ──
+render();
+</script>
+</body>
+</html>
