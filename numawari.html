@@ -173,19 +173,27 @@ const NumawariGenerator = (() => {
 
   // Generate a random rectangle partition covering the entire grid
   function randomPartition(rows, cols) {
-    // Recursive splitting approach
+    // Scale thresholds so larger grids produce larger rectangles
+    const gridArea = rows * cols;
+    // On a 5x5, maxSingle ~ 6; on a 10x10, maxSingle ~ 15
+    const maxSingle = Math.max(6, Math.round(gridArea * 0.15));
+
     function split(r1, c1, r2, c2) {
       const w = c2 - c1 + 1, h = r2 - r1 + 1;
       const area = w * h;
 
       // Never create 1x1 rectangles (perimeter 4)
-      if (w === 1 && h === 1) return [{ r1, c1, r2, c2 }]; // shouldn't happen but safety
+      if (w === 1 && h === 1) return [{ r1, c1, r2, c2 }];
 
-      // Base case: small enough to be a single rectangle
+      // Base case: small enough to be a single rectangle (always keep 1x2, 2x1, 2x2)
       if (area <= 2 || (w <= 2 && h <= 2)) return [{ r1, c1, r2, c2 }];
-      // Sometimes accept medium rectangles as-is
-      if (area <= 6 && Math.random() < 0.3) return [{ r1, c1, r2, c2 }];
-      if (area <= 4 && Math.random() < 0.6) return [{ r1, c1, r2, c2 }];
+
+      // Probabilistically keep medium-to-large rectangles as-is
+      // Higher chance for smaller areas, lower for bigger ones
+      if (area <= maxSingle) {
+        const keepProb = 0.15 + 0.35 * (1 - area / maxSingle);
+        if (Math.random() < keepProb) return [{ r1, c1, r2, c2 }];
+      }
 
       // Try horizontal or vertical split — avoid creating 1x1 pieces
       const tries = [];
@@ -228,7 +236,8 @@ const NumawariGenerator = (() => {
   // Perturb a partition: merge two adjacent rectangles and re-split
   function perturbPartition(rects, rows, cols) {
     const result = rects.slice();
-    const attempts = Math.min(result.length * 2, 20);
+    const maxMergeArea = Math.max(12, Math.round(rows * cols * 0.2));
+    const attempts = Math.min(result.length * 3, 30);
 
     for (let a = 0; a < attempts && result.length > 1; a++) {
       const i = randInt(0, result.length - 1);
@@ -248,7 +257,7 @@ const NumawariGenerator = (() => {
         const areaJ = (rj.r2 - rj.r1 + 1) * (rj.c2 - rj.c1 + 1);
 
         if (combinedArea !== areaI + areaJ) continue; // not a clean merge
-        if (combinedArea > 12) continue; // too big
+        if (combinedArea > maxMergeArea) continue; // too big
 
         // Check that no other rectangle occupies cells in the combined region
         let overlap = false;
@@ -267,6 +276,11 @@ const NumawariGenerator = (() => {
         result.splice(Math.min(i, j), 1);
 
         const mw = mc2 - mc1 + 1, mh = mr2 - mr1 + 1;
+        // Sometimes keep the merged region as one large rectangle (creates bigger perimeters)
+        if (mw * mh >= 4 && !(mw === 1 && mh === 1) && Math.random() < 0.35) {
+          result.push({ r1: mr1, c1: mc1, r2: mr2, c2: mc2 });
+          break;
+        }
         // Split into 2 new rectangles, avoiding 1x1 pieces
         // A horizontal split is safe if mw > 1 (both halves have width > 1)
         // or mh >= 4 (can split so each half has h >= 2)
