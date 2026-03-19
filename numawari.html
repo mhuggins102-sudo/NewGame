@@ -26,10 +26,11 @@
   <h1>Numawari</h1>
   <p class="subtitle">Perimeter-based region division puzzle</p>
   <div class="instructions">
-    <strong>Rules:</strong> Divide the grid into rectangles. Each rectangle must contain exactly one
-    number, and that number must equal the rectangle's perimeter (2 &times; (width + height)).<br>
+    <strong>Rules:</strong> Divide the grid into rectangles so that every cell is covered.
+    Each rectangle must contain exactly one number, and that number must equal the
+    rectangle's perimeter (2 &times; (width + height)).<br>
     <strong>Controls:</strong> Click a cell to select the first corner, then click another cell to
-    define the opposite corner. Right-click or click a colored region to remove it.
+    define the opposite corner. Click a colored region to remove it.
   </div>
   <div id="grid" class="puzzle-grid"></div>
   <div class="controls">
@@ -42,7 +43,11 @@
 <script>
 const COLS = 5, ROWS = 4;
 const numbers = {};
-[[0,1,8],[0,4,8],[1,0,6],[1,2,6],[2,2,10],[3,0,4],[3,4,6]].forEach(([r,c,n]) => numbers[r+','+c] = n);
+// Puzzle designed so a complete tiling exists:
+// Solution: A(3x1 col0)=8, B(1x2 r0 c1-2)=6, C(1x2 r0 c3-4)=6,
+//           D(2x2 r1-2 c1-2)=8, E(1x2 r1 c3-4)=6,
+//           F(2x2 r2-3 c3-4)=8, G(1x3 r3 c0-2)=8
+[[1,0,8],[0,2,6],[0,3,6],[2,1,8],[1,4,6],[3,3,8],[3,1,8]].forEach(([r,c,n]) => numbers[r+','+c] = n);
 
 const PALETTE = ['#e6435088','#4ea4d088','#8bc34a88','#ff980088','#ab47bc88','#26a69a88','#ef535088','#42a5f588'];
 let regions = [];
@@ -137,12 +142,10 @@ function clearSelection() {
 }
 
 function tryPlaceRegion(r1, c1, r2, c2) {
-  // Check overlap with existing regions
   for (let rr = r1; rr <= r2; rr++)
     for (let cc = c1; cc <= c2; cc++)
       if (getRegionAt(rr, cc)) { showStatus('Region overlaps an existing one.', false); return; }
 
-  // Count numbers in region
   let numCount = 0, numVal = 0;
   for (let rr = r1; rr <= r2; rr++)
     for (let cc = c1; cc <= c2; cc++) {
@@ -167,7 +170,6 @@ function removeRegion(reg) {
 }
 
 function renderRegions() {
-  // Reset all cells
   cells.forEach(cell => {
     cell.style.background = '';
     cell.style.borderTop = '';
@@ -176,7 +178,6 @@ function renderRegions() {
     cell.style.borderRight = '';
     cell.classList.remove('region-cell');
   });
-  // Apply regions
   regions.forEach((reg, idx) => {
     const color = PALETTE[idx % PALETTE.length];
     reg.color = color;
@@ -196,7 +197,6 @@ function renderRegions() {
 }
 
 function checkSolution() {
-  // Check all cells covered
   const covered = new Set();
   for (const reg of regions) {
     for (let r = reg.r1; r <= reg.r2; r++)
@@ -204,9 +204,8 @@ function checkSolution() {
         covered.add(r + ',' + c);
   }
   if (covered.size < ROWS * COLS) {
-    showStatus(`Not all cells are covered (${covered.size}/${ROWS * COLS}).`, false); return;
+    showStatus(`Not all cells are covered (${covered.size}/${ROWS * COLS}). Every cell must belong to a region.`, false); return;
   }
-  // Check each region validity
   for (const reg of regions) {
     let numCount = 0, numVal = 0;
     for (let r = reg.r1; r <= reg.r2; r++)
