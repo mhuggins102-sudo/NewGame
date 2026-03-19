@@ -6,7 +6,7 @@
 <title>Numawari</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  :root { --accent: #ffd93d; --cols: 5; --rows: 4; }
+  :root { --accent: #ffd93d; --cols: 5; --rows: 5; }
   .btn--primary { background: var(--accent); border-color: var(--accent); color: #1a1a2e; }
   .btn--primary:hover { background: #e6c235; }
   .cell { transition: background 0.1s, border 0.1s; }
@@ -18,6 +18,15 @@
   .cell.region-cell { border-color: transparent; }
   h1 { color: var(--accent); }
   .back-link:hover { color: var(--accent); }
+  .difficulty-selector { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .difficulty-selector label { color: var(--text-muted); font-size: 0.85rem; margin-right: 4px; }
+  .difficulty-selector select {
+    padding: 6px 12px; border-radius: 6px; background: var(--card-bg);
+    color: var(--text); border: 1px solid rgba(255,255,255,0.15);
+    font-size: 0.85rem; cursor: pointer;
+  }
+  .difficulty-selector select:hover { border-color: var(--accent); }
+  .generating { color: var(--accent); font-size: 0.85rem; padding: 8px 0; }
 </style>
 </head>
 <body>
@@ -32,6 +41,17 @@
     <strong>Controls:</strong> Click a cell to select the first corner, then click another cell to
     define the opposite corner. Click a colored region to remove it.
   </div>
+  <div class="difficulty-selector">
+    <label>Size:</label>
+    <select id="size-select">
+      <option value="5x5">5 &times; 5 (Beginner)</option>
+      <option value="6x6" selected>6 &times; 6 (Easy)</option>
+      <option value="7x7">7 &times; 7 (Medium)</option>
+      <option value="8x8">8 &times; 8 (Hard)</option>
+    </select>
+    <button class="btn btn--primary" onclick="newPuzzle()">New Puzzle</button>
+  </div>
+  <div id="generating" class="generating" style="display:none">Generating puzzle...</div>
   <div id="grid" class="puzzle-grid"></div>
   <div class="controls">
     <button class="btn btn--primary" onclick="checkSolution()">Check</button>
@@ -41,23 +61,338 @@
   <div id="preview-info" class="preview-info"></div>
 </div>
 <script>
-const COLS = 5, ROWS = 4;
-const numbers = {};
-// Puzzle designed so a complete tiling exists:
-// Solution: A(3x1 col0)=8, B(1x2 r0 c1-2)=6, C(1x2 r0 c3-4)=6,
-//           D(2x2 r1-2 c1-2)=8, E(1x2 r1 c3-4)=6,
-//           F(2x2 r2-3 c3-4)=8, G(1x3 r3 c0-2)=8
-[[1,0,8],[0,2,6],[0,3,6],[2,1,8],[1,4,6],[3,3,8],[3,1,8]].forEach(([r,c,n]) => numbers[r+','+c] = n);
+// ========== SOLVER ==========
+const NumawariSolver = (() => {
+  function solve(rows, cols, numberList, maxSolutions = 2) {
+    const totalCells = rows * cols;
+    // Build a set of number positions for quick lookup
+    const numberPositions = new Set();
+    numberList.forEach(([r, c]) => numberPositions.add(r * cols + c));
 
-const PALETTE = ['#e6435088','#4ea4d088','#8bc34a88','#ff980088','#ab47bc88','#26a69a88','#ef535088','#42a5f588'];
+    // Enumerate candidate rectangles for each number
+    const candidates = [];
+    for (let ni = 0; ni < numberList.length; ni++) {
+      const [nr, nc, val] = numberList[ni];
+      if (val % 2 !== 0) return []; // odd perimeter = impossible
+      const S = val / 2; // w + h = S
+      const cands = [];
+      for (let w = 1; w < S; w++) {
+        const h = S - w;
+        if (w > cols || h > rows) continue;
+        // All positions where (nr, nc) is inside a w*h rectangle
+        const c1Min = Math.max(0, nc - w + 1);
+        const c1Max = Math.min(cols - w, nc);
+        const r1Min = Math.max(0, nr - h + 1);
+        const r1Max = Math.min(rows - h, nr);
+        for (let c1 = c1Min; c1 <= c1Max; c1++) {
+          for (let r1 = r1Min; r1 <= r1Max; r1++) {
+            // Check: rectangle contains no OTHER number
+            let valid = true;
+            for (let nj = 0; nj < numberList.length; nj++) {
+              if (nj === ni) continue;
+              const [or, oc] = numberList[nj];
+              if (or >= r1 && or < r1 + h && oc >= c1 && oc < c1 + w) {
+                valid = false;
+                break;
+              }
+            }
+            if (!valid) continue;
+            // Compute bitmask (for grids <= 32 cells use number, else BigInt)
+            if (totalCells <= 32) {
+              let mask = 0;
+              for (let rr = r1; rr < r1 + h; rr++)
+                for (let cc = c1; cc < c1 + w; cc++)
+                  mask |= (1 << (rr * cols + cc));
+              cands.push(mask);
+            } else {
+              let mask = 0n;
+              for (let rr = r1; rr < r1 + h; rr++)
+                for (let cc = c1; cc < c1 + w; cc++)
+                  mask |= (1n << BigInt(rr * cols + cc));
+              cands.push(mask);
+            }
+          }
+        }
+      }
+      if (cands.length === 0) return [];
+      candidates.push(cands);
+    }
+
+    const solutions = [];
+    const useBigInt = totalCells > 32;
+    const allBits = useBigInt
+      ? (1n << BigInt(totalCells)) - 1n
+      : ((totalCells === 32) ? -1 : (1 << totalCells) - 1) >>> 0;
+    const ZERO = useBigInt ? 0n : 0;
+
+    function backtrack(covered, placed, depth) {
+      if (solutions.length >= maxSolutions) return;
+      if (covered === allBits) {
+        solutions.push(placed.slice());
+        return;
+      }
+
+      // Find unplaced number with fewest valid candidates (MRV)
+      let bestIdx = -1, bestCount = Infinity, bestValid = null;
+      for (let i = 0; i < candidates.length; i++) {
+        if (placed[i] !== -1) continue;
+        const valid = [];
+        for (const mask of candidates[i]) {
+          if ((covered & mask) === ZERO) valid.push(mask);
+        }
+        if (valid.length === 0) return; // dead end
+        if (valid.length < bestCount) {
+          bestCount = valid.length;
+          bestIdx = i;
+          bestValid = valid;
+        }
+      }
+      if (bestIdx === -1) return; // no unplaced numbers but cells uncovered
+
+      for (const mask of bestValid) {
+        if (solutions.length >= maxSolutions) return;
+        placed[bestIdx] = mask;
+        backtrack(useBigInt ? (covered | mask) : ((covered | mask) >>> 0), placed, depth + 1);
+        placed[bestIdx] = -1;
+      }
+    }
+
+    const placed = new Array(candidates.length).fill(-1);
+    backtrack(ZERO, placed, 0);
+    return solutions;
+  }
+
+  return { solve };
+})();
+
+// ========== GENERATOR ==========
+const NumawariGenerator = (() => {
+  function randInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+
+  // Generate a random rectangle partition covering the entire grid
+  function randomPartition(rows, cols) {
+    // Recursive splitting approach
+    function split(r1, c1, r2, c2) {
+      const w = c2 - c1 + 1, h = r2 - r1 + 1;
+      const area = w * h;
+
+      // Base case: small enough to be a single rectangle
+      if (area <= 2 || (w <= 2 && h <= 2)) return [{ r1, c1, r2, c2 }];
+      // Sometimes accept medium rectangles as-is
+      if (area <= 6 && Math.random() < 0.3) return [{ r1, c1, r2, c2 }];
+      if (area <= 4 && Math.random() < 0.6) return [{ r1, c1, r2, c2 }];
+
+      // Try horizontal or vertical split
+      const tries = [];
+      if (h >= 2) tries.push('h');
+      if (w >= 2) tries.push('v');
+
+      // Shuffle split directions
+      if (tries.length === 2 && Math.random() < 0.5) tries.reverse();
+
+      for (const dir of tries) {
+        if (dir === 'h') {
+          const splitRow = randInt(r1, r2 - 1);
+          return [
+            ...split(r1, c1, splitRow, c2),
+            ...split(splitRow + 1, c1, r2, c2),
+          ];
+        } else {
+          const splitCol = randInt(c1, c2 - 1);
+          return [
+            ...split(r1, c1, r2, splitCol),
+            ...split(r1, splitCol + 1, r2, c2),
+          ];
+        }
+      }
+      return [{ r1, c1, r2, c2 }];
+    }
+
+    return split(0, 0, rows - 1, cols - 1);
+  }
+
+  // Perturb a partition: merge two adjacent rectangles and re-split
+  function perturbPartition(rects, rows, cols) {
+    const result = rects.slice();
+    const attempts = Math.min(result.length * 2, 20);
+
+    for (let a = 0; a < attempts && result.length > 1; a++) {
+      const i = randInt(0, result.length - 1);
+      const ri = result[i];
+
+      // Find an adjacent rectangle that forms a combined rectangle
+      for (let tries = 0; tries < 5; tries++) {
+        const j = randInt(0, result.length - 1);
+        if (j === i) continue;
+        const rj = result[j];
+
+        // Check if they form a combined rectangle
+        const mr1 = Math.min(ri.r1, rj.r1), mc1 = Math.min(ri.c1, rj.c1);
+        const mr2 = Math.max(ri.r2, rj.r2), mc2 = Math.max(ri.c2, rj.c2);
+        const combinedArea = (mr2 - mr1 + 1) * (mc2 - mc1 + 1);
+        const areaI = (ri.r2 - ri.r1 + 1) * (ri.c2 - ri.c1 + 1);
+        const areaJ = (rj.r2 - rj.r1 + 1) * (rj.c2 - rj.c1 + 1);
+
+        if (combinedArea !== areaI + areaJ) continue; // not a clean merge
+        if (combinedArea > 12) continue; // too big
+
+        // Check that no other rectangle occupies cells in the combined region
+        let overlap = false;
+        for (let k = 0; k < result.length; k++) {
+          if (k === i || k === j) continue;
+          const rk = result[k];
+          if (rk.r1 <= mr2 && rk.r2 >= mr1 && rk.c1 <= mc2 && rk.c2 >= mc1) {
+            overlap = true;
+            break;
+          }
+        }
+        if (overlap) continue;
+
+        // Remove both, re-split the combined region
+        result.splice(Math.max(i, j), 1);
+        result.splice(Math.min(i, j), 1);
+
+        const mw = mc2 - mc1 + 1, mh = mr2 - mr1 + 1;
+        // Split into 2 new rectangles
+        if (mw >= 2 && mh >= 2 && Math.random() < 0.5) {
+          // Try both directions
+          if (Math.random() < 0.5 && mh >= 2) {
+            const sr = randInt(mr1, mr2 - 1);
+            result.push({ r1: mr1, c1: mc1, r2: sr, c2: mc2 });
+            result.push({ r1: sr + 1, c1: mc1, r2: mr2, c2: mc2 });
+          } else {
+            const sc = randInt(mc1, mc2 - 1);
+            result.push({ r1: mr1, c1: mc1, r2: mr2, c2: sc });
+            result.push({ r1: mr1, c1: sc + 1, r2: mr2, c2: mc2 });
+          }
+        } else if (mh >= 2 && Math.random() < 0.7) {
+          const sr = randInt(mr1, mr2 - 1);
+          result.push({ r1: mr1, c1: mc1, r2: sr, c2: mc2 });
+          result.push({ r1: sr + 1, c1: mc1, r2: mr2, c2: mc2 });
+        } else if (mw >= 2) {
+          const sc = randInt(mc1, mc2 - 1);
+          result.push({ r1: mr1, c1: mc1, r2: mr2, c2: sc });
+          result.push({ r1: mr1, c1: sc + 1, r2: mr2, c2: mc2 });
+        } else {
+          result.push({ r1: mr1, c1: mc1, r2: mr2, c2: mc2 });
+        }
+        break;
+      }
+    }
+    return result;
+  }
+
+  // Place number inside each rectangle, return the numbers list
+  function placeNumbers(rects) {
+    return rects.map(rect => {
+      const w = rect.c2 - rect.c1 + 1;
+      const h = rect.r2 - rect.r1 + 1;
+      const perimeter = 2 * (w + h);
+      // Place number at a random cell in the rectangle
+      const r = randInt(rect.r1, rect.r2);
+      const c = randInt(rect.c1, rect.c2);
+      return [r, c, perimeter];
+    });
+  }
+
+  // Validate: no 1x1 rectangles (perimeter 4 is too trivial — allow it but filter if desired)
+  function isValidPartition(rects, minPerimeter = 4) {
+    for (const rect of rects) {
+      const w = rect.c2 - rect.c1 + 1;
+      const h = rect.r2 - rect.r1 + 1;
+      if (2 * (w + h) < minPerimeter) return false;
+    }
+    return true;
+  }
+
+  function generate(rows, cols, maxAttempts = 200) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Step 1: Generate partition
+      let rects = randomPartition(rows, cols);
+
+      // Step 2: Perturb for variety
+      rects = perturbPartition(rects, rows, cols);
+
+      // Step 3: Filter out 1×1 rectangles (perimeter 4) — they're trivially solvable
+      if (!isValidPartition(rects, 6)) continue;
+
+      // Step 4: Place numbers
+      const nums = placeNumbers(rects);
+
+      // Step 5: Check for unique solution
+      const solutions = NumawariSolver.solve(rows, cols, nums, 2);
+      if (solutions.length === 1) {
+        return { rows, cols, numbers: nums, rects };
+      }
+    }
+    // Fallback: allow 1x1 rectangles
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let rects = randomPartition(rows, cols);
+      rects = perturbPartition(rects, rows, cols);
+      if (!isValidPartition(rects, 4)) continue;
+      const nums = placeNumbers(rects);
+      const solutions = NumawariSolver.solve(rows, cols, nums, 2);
+      if (solutions.length === 1) {
+        return { rows, cols, numbers: nums, rects };
+      }
+    }
+    return null;
+  }
+
+  return { generate };
+})();
+
+// ========== GAME ==========
+let COLS = 6, ROWS = 6;
+let numbers = {};
 let regions = [];
 let startCell = null;
 let cells = [];
+
+const PALETTE = ['#e6435088','#4ea4d088','#8bc34a88','#ff980088','#ab47bc88','#26a69a88','#ef535088','#42a5f588',
+                  '#ff707088','#66bb6a88','#7e57c288','#ffa72688'];
+
+function loadPuzzle(puzzle) {
+  ROWS = puzzle.rows;
+  COLS = puzzle.cols;
+  numbers = {};
+  puzzle.numbers.forEach(([r, c, n]) => numbers[r + ',' + c] = n);
+  document.documentElement.style.setProperty('--cols', COLS);
+  document.documentElement.style.setProperty('--rows', ROWS);
+  regions = [];
+  startCell = null;
+  clearStatus();
+  init();
+}
+
+function newPuzzle() {
+  const sel = document.getElementById('size-select').value;
+  const [c, r] = sel.split('x').map(Number);
+  ROWS = r;
+  COLS = c;
+
+  const genEl = document.getElementById('generating');
+  genEl.style.display = 'block';
+  document.getElementById('grid').innerHTML = '';
+
+  // Use setTimeout to let the UI update before blocking generation
+  setTimeout(() => {
+    const puzzle = NumawariGenerator.generate(ROWS, COLS);
+    genEl.style.display = 'none';
+    if (puzzle) {
+      loadPuzzle(puzzle);
+    } else {
+      showStatus('Failed to generate puzzle. Try again.', false);
+    }
+  }, 20);
+}
 
 function init() {
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
   cells = [];
+  document.documentElement.style.setProperty('--cols', COLS);
+  document.documentElement.style.setProperty('--rows', ROWS);
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const cell = document.createElement('div');
@@ -204,7 +539,7 @@ function checkSolution() {
         covered.add(r + ',' + c);
   }
   if (covered.size < ROWS * COLS) {
-    showStatus(`Not all cells are covered (${covered.size}/${ROWS * COLS}). Every cell must belong to a region.`, false); return;
+    showStatus(`Not all cells are covered (${covered.size}/${ROWS * COLS}).`, false); return;
   }
   for (const reg of regions) {
     let numCount = 0, numVal = 0;
@@ -240,7 +575,8 @@ function clearStatus() {
   el.textContent = '';
 }
 
-init();
+// Generate initial puzzle on load
+newPuzzle();
 </script>
 </body>
 </html>
