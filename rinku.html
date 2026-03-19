@@ -19,7 +19,6 @@
     .puzzle-grid { position: relative; z-index: 1; }
     .cell { cursor: pointer; position: relative; }
     .cell--selected { background: #2a4a6a; box-shadow: inset 0 0 0 2px var(--accent); }
-    .cell--on-loop { }
 
     .num-circle {
       width: 70%; height: 70%; border-radius: 50%;
@@ -28,7 +27,6 @@
       position: relative; z-index: 3;
     }
 
-    /* Dot drawn at center of cells that are on the loop but have no number */
     .loop-dot {
       width: 10px; height: 10px; border-radius: 50%;
       background: rgba(255,255,255,0.6);
@@ -44,7 +42,6 @@
       stroke-linecap: round; pointer-events: none;
     }
 
-    /* Adjacency hint: highlight neighbor cells when a cell is selected */
     .cell--neighbor-hint { background: #1a3a5a; }
   </style>
 </head>
@@ -72,6 +69,7 @@
   <div class="controls">
     <button class="btn btn--primary" onclick="check()">Check</button>
     <button class="btn" onclick="reset()">Reset</button>
+    <button class="btn" onclick="showSolution()">Show Solution</button>
   </div>
   <div class="status-bar" id="status"></div>
 </div>
@@ -79,17 +77,33 @@
 <script>
 const ROWS = 5, COLS = 5;
 const RED = '#e94560', BLUE = '#4ecdc4';
+
+// Verified solvable puzzle. Loop length = 16.
+// Solution loop (in order):
+//   (0,1)→(0,2)→(0,3)→(1,3)→(1,4)→(2,4)→(3,4)→(3,3)→
+//   (4,3)→(4,2)→(4,1)→(3,1)→(3,0)→(2,0)→(1,0)→(1,1)→back to (0,1)
+//
+// Red clues (sum of values = 16):
+//   (0,1) R4 [pos 0] → 4 steps → (1,4) R6 [pos 4] → 6 steps → (4,1) R6 [pos 10] → 6 steps → back
+// Blue clues (sum of values = 16):
+//   (1,3) B4 [pos 3] → 4 steps → (3,3) B4 [pos 7] → 4 steps → (3,1) B8 [pos 11] → 8 steps → back
+
 const CLUES = [
-  [0,1,RED,4],[0,3,BLUE,6],
-  [2,0,BLUE,6],[2,4,RED,4],
-  [4,1,RED,4],[4,3,BLUE,6]
+  [0,1,RED,4],  [1,4,RED,6],  [4,1,RED,6],
+  [1,3,BLUE,4], [3,3,BLUE,4], [3,1,BLUE,8]
 ];
 const clueMap = {};
 CLUES.forEach(c => clueMap[c[0]+','+c[1]] = { color: c[2], num: c[3] });
 
+// Solution edges for "Show Solution"
+const SOLUTION_EDGES = [
+  [0,1,0,2],[0,2,0,3],[0,3,1,3],[1,3,1,4],[1,4,2,4],[2,4,3,4],[3,4,3,3],[3,3,4,3],
+  [4,3,4,2],[4,2,4,1],[4,1,3,1],[3,1,3,0],[3,0,2,0],[2,0,1,0],[1,0,1,1],[1,1,0,1]
+];
+
 const edges = new Set();
 let cellSize;
-let selected = null; // {r, c} or null
+let selected = null;
 
 function edgeKey(r1,c1,r2,c2) {
   const a = r1+','+c1, b = r2+','+c2;
@@ -153,20 +167,15 @@ function buildGrid() {
 function handleClick(r, c) {
   clearStatus();
   if (selected === null) {
-    // Select this cell
     select(r, c);
   } else if (selected.r === r && selected.c === c) {
-    // Deselect
     deselect();
   } else if (isAdjacent(selected.r, selected.c, r, c)) {
-    // Toggle edge between selected and clicked cell
     const key = edgeKey(selected.r, selected.c, r, c);
     if (edges.has(key)) edges.delete(key); else edges.add(key);
-    // Move selection to clicked cell so user can keep drawing
     select(r, c);
     renderEdges();
   } else {
-    // Clicked a non-adjacent cell — just select it instead
     select(r, c);
   }
 }
@@ -175,7 +184,6 @@ function select(r, c) {
   deselect();
   selected = { r, c };
   document.getElementById('cell-'+r+'-'+c).classList.add('cell--selected');
-  // Show neighbor hints
   for (const [nr, nc] of getNeighbors(r, c)) {
     document.getElementById('cell-'+nr+'-'+nc).classList.add('cell--neighbor-hint');
   }
@@ -195,11 +203,9 @@ function cx(c) { return (c+0.5)*cellSize; }
 function cy(r) { return (r+0.5)*cellSize; }
 
 function renderEdges() {
-  // Draw SVG lines
   const svg = document.getElementById('svg');
   const cs = cellSize;
   svg.setAttribute('viewBox', '0 0 ' + (COLS*cs) + ' ' + (ROWS*cs));
-  // Remove old lines
   svg.querySelectorAll('.edge-line').forEach(l => l.remove());
   for (const key of edges) {
     const [a,b] = key.split('-');
@@ -211,13 +217,10 @@ function renderEdges() {
     line.setAttribute('x2', cx(c2)); line.setAttribute('y2', cy(r2));
     svg.appendChild(line);
   }
-  // Update cell dots
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const cell = document.getElementById('cell-'+r+'-'+c);
       const onLoop = cellConnections(r,c) >= 1;
-      cell.classList.toggle('cell--on-loop', onLoop);
-      // Add/remove dot for non-clue loop cells
       const existingDot = cell.querySelector('.loop-dot');
       const hasClue = clueMap[r+','+c];
       if (onLoop && !hasClue && !existingDot) {
@@ -230,6 +233,16 @@ function renderEdges() {
       cell.classList.remove('cell--error','cell--success');
     }
   }
+}
+
+function showSolution() {
+  edges.clear();
+  for (const [r1,c1,r2,c2] of SOLUTION_EDGES) {
+    edges.add(edgeKey(r1,c1,r2,c2));
+  }
+  deselect();
+  renderEdges();
+  showStatus('Solution revealed. Press Check to verify.', true);
 }
 
 function check() {
@@ -320,7 +333,6 @@ function reset() {
   renderEdges();
 }
 
-// Escape key to deselect
 document.addEventListener('keydown', e => { if (e.key === 'Escape') deselect(); });
 
 buildGrid();
