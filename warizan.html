@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Warizan – KenKen Puzzle</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { --accent: #e94560; }
+    .region-A { background: rgba(233, 69, 96, 0.15); }
+    .region-B { background: rgba(78, 204, 163, 0.15); }
+    .region-C { background: rgba(72, 149, 239, 0.15); }
+    .region-D { background: rgba(255, 190, 11, 0.15); }
+    .region-E { background: rgba(181, 101, 252, 0.15); }
+    .region-F { background: rgba(255, 139, 62, 0.15); }
+    .region-G { background: rgba(0, 210, 211, 0.15); }
+    .region-H { background: rgba(255, 105, 180, 0.15); }
+    .cell .region-label { font-size: 0.6rem; font-weight: 700; color: #ccc; }
+    .number-btns { display: flex; gap: 8px; margin: 10px 0; }
+    .number-btns .btn { min-width: 44px; font-size: 1.1rem; font-weight: 700; text-align: center; }
+    .cell.thick-top    { border-top: 3px solid var(--accent) !important; }
+    .cell.thick-bottom { border-bottom: 3px solid var(--accent) !important; }
+    .cell.thick-left   { border-left: 3px solid var(--accent) !important; }
+    .cell.thick-right  { border-right: 3px solid var(--accent) !important; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="index.html" class="back-link">&#8592; Back to puzzles</a>
+  <h1>Warizan</h1>
+  <p class="subtitle">KenKen / Calcudoku – fill the 4×4 grid with 1–4</p>
+
+  <div class="instructions">
+    <strong>Rules:</strong> Fill every cell with a number 1–4. Each row and column must contain
+    each number exactly once (Latin square). Thick-bordered regions have an operator and target –
+    the numbers in that region must produce the target using the operator.
+    Click a cell, then press 1–4 or use the buttons below. Click a filled cell to clear it.
+  </div>
+
+  <div class="puzzle-grid" id="grid" style="--cols:4;--rows:4;"></div>
+
+  <div class="number-btns" id="numBtns">
+    <button class="btn" data-num="1">1</button>
+    <button class="btn" data-num="2">2</button>
+    <button class="btn" data-num="3">3</button>
+    <button class="btn" data-num="4">4</button>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn--primary" id="checkBtn">Check</button>
+    <button class="btn" id="resetBtn">Reset</button>
+  </div>
+
+  <div class="status-bar" id="status"></div>
+</div>
+
+<script>
+(function() {
+  const SIZE = 4;
+
+  // Region definitions: id, cells [row,col], label text
+  const regions = [
+    { id: 'A', cells: [[0,0],[0,1]], label: '2\u00F7', op: '/', target: 2 },
+    { id: 'B', cells: [[0,2],[0,3],[1,3]], label: '9+', op: '+', target: 9 },
+    { id: 'C', cells: [[1,0],[2,0]], label: '2\u2212', op: '-', target: 2 },
+    { id: 'D', cells: [[1,1],[1,2]], label: '4\u00F7', op: '/', target: 4 },
+    { id: 'E', cells: [[2,1],[2,2],[3,1]], label: '7+', op: '+', target: 7 },
+    { id: 'F', cells: [[2,3],[3,3]], label: '3\u2212', op: '-', target: 3 },
+    { id: 'G', cells: [[3,0]], label: '4', op: '=', target: 4 },
+    { id: 'H', cells: [[3,2]], label: '3', op: '=', target: 3 }
+  ];
+
+  // Build region map: regionMap[r][c] = region object
+  const regionMap = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+  // Track which cell is the "first" (top-left) cell of its region for label placement
+  const labelCell = {};
+  regions.forEach(reg => {
+    let first = null;
+    reg.cells.forEach(([r, c]) => {
+      regionMap[r][c] = reg;
+      if (!first || r < first[0] || (r === first[0] && c < first[1])) first = [r, c];
+    });
+    labelCell[reg.id] = first;
+  });
+
+  // Player grid
+  const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+  let selectedCell = null;
+
+  const gridEl = document.getElementById('grid');
+  const statusEl = document.getElementById('status');
+  const cellEls = [];
+
+  // Build cells
+  for (let r = 0; r < SIZE; r++) {
+    cellEls[r] = [];
+    for (let c = 0; c < SIZE; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const reg = regionMap[r][c];
+
+      // Region background colour
+      if (reg) cell.classList.add('region-' + reg.id);
+
+      // Thick borders between different regions
+      if (r === 0 || regionMap[r - 1][c] !== reg) cell.classList.add('thick-top');
+      if (r === SIZE - 1 || regionMap[r + 1]?.[c] !== reg) cell.classList.add('thick-bottom');
+      if (c === 0 || regionMap[r][c - 1] !== reg) cell.classList.add('thick-left');
+      if (c === SIZE - 1 || regionMap[r][c + 1] !== reg) cell.classList.add('thick-right');
+
+      // Region label in top-left cell
+      const lc = labelCell[reg.id];
+      if (lc && lc[0] === r && lc[1] === c) {
+        const span = document.createElement('span');
+        span.className = 'region-label';
+        span.textContent = reg.label;
+        cell.appendChild(span);
+      }
+
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.addEventListener('click', () => selectCell(r, c));
+      gridEl.appendChild(cell);
+      cellEls[r][c] = cell;
+    }
+  }
+
+  function selectCell(r, c) {
+    clearStatus();
+    // If this cell is already selected and has a value, clear it
+    if (selectedCell && selectedCell[0] === r && selectedCell[1] === c && board[r][c] !== 0) {
+      board[r][c] = 0;
+      render();
+      return;
+    }
+    selectedCell = [r, c];
+    render();
+  }
+
+  function placeNumber(n) {
+    if (!selectedCell) return;
+    const [r, c] = selectedCell;
+    board[r][c] = n;
+    selectedCell = null;
+    clearStatus();
+    render();
+  }
+
+  function render() {
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const el = cellEls[r][c];
+        // Keep only base classes
+        el.classList.remove('cell--selected', 'cell--error', 'cell--success');
+        if (selectedCell && selectedCell[0] === r && selectedCell[1] === c) {
+          el.classList.add('cell--selected');
+        }
+        // Display value (skip region label span)
+        const valNode = el.querySelector('.val');
+        if (valNode) valNode.textContent = board[r][c] || '';
+        else {
+          const span = document.createElement('span');
+          span.className = 'val';
+          span.textContent = board[r][c] || '';
+          el.appendChild(span);
+        }
+      }
+    }
+  }
+
+  // Number buttons
+  document.getElementById('numBtns').addEventListener('click', e => {
+    const num = e.target.dataset.num;
+    if (num) placeNumber(parseInt(num));
+  });
+
+  // Keyboard input
+  document.addEventListener('keydown', e => {
+    const n = parseInt(e.key);
+    if (n >= 1 && n <= 4) placeNumber(n);
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (selectedCell) { board[selectedCell[0]][selectedCell[1]] = 0; render(); }
+    }
+  });
+
+  // Check
+  document.getElementById('checkBtn').addEventListener('click', check);
+  document.getElementById('resetBtn').addEventListener('click', reset);
+
+  function check() {
+    // Ensure all cells filled
+    for (let r = 0; r < SIZE; r++)
+      for (let c = 0; c < SIZE; c++)
+        if (board[r][c] === 0) return showStatus('Fill every cell before checking.', false);
+
+    let errors = new Set();
+
+    // Row uniqueness
+    for (let r = 0; r < SIZE; r++) {
+      const seen = {};
+      for (let c = 0; c < SIZE; c++) {
+        const v = board[r][c];
+        if (seen[v] !== undefined) { errors.add(r + ',' + c); errors.add(r + ',' + seen[v]); }
+        else seen[v] = c;
+      }
+    }
+
+    // Column uniqueness
+    for (let c = 0; c < SIZE; c++) {
+      const seen = {};
+      for (let r = 0; r < SIZE; r++) {
+        const v = board[r][c];
+        if (seen[v] !== undefined) { errors.add(r + ',' + c); errors.add(seen[v] + ',' + c); }
+        else seen[v] = r;
+      }
+    }
+
+    // Region constraints
+    regions.forEach(reg => {
+      const vals = reg.cells.map(([r, c]) => board[r][c]);
+      if (!checkRegion(vals, reg.op, reg.target)) {
+        reg.cells.forEach(([r, c]) => errors.add(r + ',' + c));
+      }
+    });
+
+    // Apply visual feedback
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        cellEls[r][c].classList.remove('cell--error', 'cell--success');
+        if (errors.has(r + ',' + c)) cellEls[r][c].classList.add('cell--error');
+        else cellEls[r][c].classList.add('cell--success');
+      }
+    }
+
+    if (errors.size === 0) showStatus('Congratulations! Puzzle solved!', true);
+    else showStatus('Some cells are incorrect. Keep trying!', false);
+  }
+
+  function checkRegion(vals, op, target) {
+    if (op === '=') return vals.length === 1 && vals[0] === target;
+    if (op === '+') return vals.reduce((a, b) => a + b, 0) === target;
+    if (op === '*') return vals.reduce((a, b) => a * b, 1) === target;
+    if (op === '-') {
+      // For subtraction: with two cells, |a - b| must equal target
+      if (vals.length !== 2) return false;
+      return Math.abs(vals[0] - vals[1]) === target;
+    }
+    if (op === '/') {
+      // For division: with two cells, max/min must equal target
+      if (vals.length !== 2) return false;
+      const mx = Math.max(...vals), mn = Math.min(...vals);
+      return mn !== 0 && mx / mn === target;
+    }
+    return false;
+  }
+
+  function reset() {
+    for (let r = 0; r < SIZE; r++)
+      for (let c = 0; c < SIZE; c++) board[r][c] = 0;
+    selectedCell = null;
+    clearStatus();
+    for (let r = 0; r < SIZE; r++)
+      for (let c = 0; c < SIZE; c++)
+        cellEls[r][c].classList.remove('cell--error', 'cell--success', 'cell--selected');
+    render();
+  }
+
+  function showStatus(msg, success) {
+    statusEl.textContent = msg;
+    statusEl.className = 'status-bar ' + (success ? 'status-bar--success' : 'status-bar--error');
+  }
+
+  function clearStatus() {
+    statusEl.className = 'status-bar';
+    statusEl.textContent = '';
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

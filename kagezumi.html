@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kagezumi – Shadow Block Puzzle</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root { --accent: #ff6b6b; --cols: 5; --rows: 5; }
+    .btn--primary { background: var(--accent); border-color: var(--accent); }
+    .btn--primary:hover { background: #e55a5a; }
+    h1 { color: var(--accent); }
+    .game-card h2 { color: var(--accent); }
+
+    .puzzle-grid {
+      grid-template-columns: var(--cell-size) repeat(4, var(--cell-size));
+      grid-template-rows: var(--cell-size) repeat(4, var(--cell-size));
+      border: none;
+      gap: 0;
+    }
+
+    .cell--header {
+      background: #0c1a33;
+      cursor: default;
+      font-size: 0.65rem;
+      flex-direction: column;
+      line-height: 1.3;
+      border-color: #0f2040;
+      padding: 2px;
+      text-align: center;
+    }
+    .cell--header:hover { background: #0c1a33; }
+    .cell--corner { background: #0a1528; cursor: default; border-color: #0f2040; }
+    .cell--corner:hover { background: #0a1528; }
+
+    .header-target { color: var(--text-muted); font-size: 0.55rem; }
+    .header-val { font-size: 1rem; font-weight: 700; }
+    .header-val.match { color: var(--success); }
+    .header-val.mismatch { color: var(--error); }
+
+    .cell--given {
+      color: var(--accent);
+      cursor: default;
+      border: 1px solid rgba(255,107,107,0.3);
+    }
+    .cell--given:hover { background: var(--cell-bg); }
+
+    .cell .height-num { font-size: 1.4rem; font-weight: 700; }
+    .cell--h0 { background: var(--cell-bg); }
+    .cell--h1 { background: #1a3a5c; }
+    .cell--h2 { background: #244a6e; }
+    .cell--h3 { background: #2e5a80; }
+    .cell--h4 { background: #386a92; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="index.html" class="back-link">← Back to puzzles</a>
+    <h1>Kagezumi</h1>
+    <p class="subtitle">Shadow Block Puzzle</p>
+
+    <div class="instructions">
+      <strong>How to play:</strong> Place blocks of height 0–4 on the 4×4 grid.
+      The <em>front shadow</em> (column max, shown on top) and <em>side shadow</em>
+      (row max, shown on left) must match the target values.
+      Click a cell to cycle its height. Green numbers mean the shadow matches; red means it doesn't.
+      Pre-filled cells are locked.
+    </div>
+
+    <div class="puzzle-grid" id="grid"></div>
+
+    <div class="controls">
+      <button class="btn btn--primary" onclick="checkSolution()">Check</button>
+      <button class="btn" onclick="resetGrid()">Reset</button>
+    </div>
+
+    <div class="status-bar" id="status"></div>
+  </div>
+
+<script>
+const SIZE = 4;
+const solution = [
+  [3,1,0,2],
+  [1,4,2,0],
+  [0,2,3,1],
+  [2,0,1,4]
+];
+const frontTarget = [3,4,3,4]; // max per column
+const sideTarget  = [3,4,3,4]; // max per row
+const givens = {0:{0:3}, 1:{1:4}, 2:{2:3}, 3:{3:4}};
+
+let grid = Array.from({length:SIZE}, ()=> Array(SIZE).fill(0));
+
+// Initialize givens
+for (const r in givens) for (const c in givens[r]) grid[r][c] = givens[r][c];
+
+function isGiven(r,c) { return givens[r] !== undefined && givens[r][c] !== undefined; }
+
+function computeFront() {
+  return Array.from({length:SIZE}, (_,c) =>
+    Math.max(...grid.map(row => row[c]))
+  );
+}
+
+function computeSide() {
+  return grid.map(row => Math.max(...row));
+}
+
+function buildGrid() {
+  const el = document.getElementById('grid');
+  el.innerHTML = '';
+
+  // Corner cell
+  const corner = document.createElement('div');
+  corner.className = 'cell cell--corner';
+  el.appendChild(corner);
+
+  // Front shadow header row
+  const curFront = computeFront();
+  for (let c = 0; c < SIZE; c++) {
+    const hdr = document.createElement('div');
+    hdr.className = 'cell cell--header';
+    hdr.id = `front-${c}`;
+    hdr.innerHTML = headerHTML('F', frontTarget[c], curFront[c]);
+    el.appendChild(hdr);
+  }
+
+  // Grid rows with side shadow headers
+  const curSide = computeSide();
+  for (let r = 0; r < SIZE; r++) {
+    // Side shadow header
+    const hdr = document.createElement('div');
+    hdr.className = 'cell cell--header';
+    hdr.id = `side-${r}`;
+    hdr.innerHTML = headerHTML('S', sideTarget[r], curSide[r]);
+    el.appendChild(hdr);
+
+    // Data cells
+    for (let c = 0; c < SIZE; c++) {
+      const cell = document.createElement('div');
+      cell.className = `cell cell--h${grid[r][c]}`;
+      if (isGiven(r,c)) cell.classList.add('cell--given');
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.innerHTML = `<span class="height-num">${grid[r][c] || ''}</span>`;
+      if (!isGiven(r,c)) {
+        cell.addEventListener('click', () => cycleCell(r,c));
+      }
+      el.appendChild(cell);
+    }
+  }
+}
+
+function headerHTML(label, target, current) {
+  const cls = current === target ? 'match' : 'mismatch';
+  return `<span class="header-target">${label}: ${target}</span><span class="header-val ${cls}">${current}</span>`;
+}
+
+function updateHeaders() {
+  const curFront = computeFront();
+  const curSide  = computeSide();
+  for (let c = 0; c < SIZE; c++) {
+    document.getElementById(`front-${c}`).innerHTML = headerHTML('F', frontTarget[c], curFront[c]);
+  }
+  for (let r = 0; r < SIZE; r++) {
+    document.getElementById(`side-${r}`).innerHTML = headerHTML('S', sideTarget[r], curSide[r]);
+  }
+}
+
+function cycleCell(r, c) {
+  grid[r][c] = (grid[r][c] + 1) % 5;
+  const cells = document.querySelectorAll(`.cell[data-r="${r}"][data-c="${c}"]`);
+  cells.forEach(cell => {
+    for (let h = 0; h <= 4; h++) cell.classList.remove(`cell--h${h}`);
+    cell.classList.add(`cell--h${grid[r][c]}`);
+    cell.innerHTML = `<span class="height-num">${grid[r][c] || ''}</span>`;
+  });
+  updateHeaders();
+  clearStatus();
+}
+
+function checkSolution() {
+  const curFront = computeFront();
+  const curSide  = computeSide();
+  const frontOk = frontTarget.every((v,i) => v === curFront[i]);
+  const sideOk  = sideTarget.every((v,i) => v === curSide[i]);
+  const bar = document.getElementById('status');
+  if (frontOk && sideOk) {
+    bar.className = 'status-bar status-bar--success';
+    bar.textContent = 'Correct! All shadows match perfectly.';
+  } else {
+    bar.className = 'status-bar status-bar--error';
+    const issues = [];
+    if (!frontOk) issues.push('front shadows');
+    if (!sideOk) issues.push('side shadows');
+    bar.textContent = `Not quite — ${issues.join(' and ')} don't match the targets yet.`;
+  }
+}
+
+function resetGrid() {
+  for (let r = 0; r < SIZE; r++)
+    for (let c = 0; c < SIZE; c++)
+      if (!isGiven(r,c)) grid[r][c] = 0;
+  buildGrid();
+  clearStatus();
+}
+
+function clearStatus() {
+  const bar = document.getElementById('status');
+  bar.className = 'status-bar';
+  bar.textContent = '';
+}
+
+buildGrid();
+</script>
+</body>
+</html>

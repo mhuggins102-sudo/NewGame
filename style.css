@@ -1,0 +1,234 @@
+/* === Reset & Base === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1a1a2e;
+  --card-bg: #16213e;
+  --cell-bg: #0f3460;
+  --cell-border: #1a1a4e;
+  --text: #e0e0e0;
+  --text-muted: #8888aa;
+  --accent: #e94560;
+  --success: #4ecca3;
+  --error: #e94560;
+  --cell-size: min(60px, calc((100vw - 60px) / var(--cols, 4)));
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* === Container === */
+.container {
+  max-width: 700px;
+  width: 100%;
+  padding: 20px;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin-bottom: 4px;
+  color: var(--accent);
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 20px;
+}
+
+/* === Hub Page Cards === */
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.game-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 20px;
+  text-decoration: none;
+  color: var(--text);
+  transition: transform 0.15s, box-shadow 0.15s;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.game-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  border-color: var(--accent);
+}
+
+.game-card .icon {
+  font-size: 2rem;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.game-card h2 {
+  font-size: 1.1rem;
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+
+.game-card p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* === Puzzle Grid === */
+.puzzle-grid {
+  display: inline-grid;
+  grid-template-columns: repeat(var(--cols, 4), var(--cell-size));
+  grid-template-rows: repeat(var(--rows, 4), var(--cell-size));
+  gap: 0;
+  margin: 16px 0;
+  border: 2px solid var(--accent);
+}
+
+.cell {
+  width: var(--cell-size);
+  height: var(--cell-size);
+  background: var(--cell-bg);
+  border: 1px solid var(--cell-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  transition: background 0.1s;
+}
+
+.cell:hover {
+  background: #1a4a7a;
+}
+
+.cell--given {
+  color: var(--accent);
+  cursor: default;
+}
+
+.cell--selected {
+  background: #1a4a7a;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.cell--error {
+  background: rgba(233, 69, 96, 0.2);
+  box-shadow: inset 0 0 0 2px var(--error);
+}
+
+.cell--success {
+  background: rgba(78, 204, 163, 0.15);
+}
+
+/* === Region label (for KenKen/Warizan) === */
+.cell .region-label {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 0.55rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  pointer-events: none;
+}
+
+/* === Buttons === */
+.controls {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 8px 20px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn:hover {
+  background: var(--cell-bg);
+  border-color: var(--accent);
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  background: #c73a52;
+}
+
+/* === Status Bar === */
+.status-bar {
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin: 8px 0;
+  display: none;
+}
+
+.status-bar--success {
+  display: block;
+  background: rgba(78, 204, 163, 0.15);
+  border: 1px solid var(--success);
+  color: var(--success);
+}
+
+.status-bar--error {
+  display: block;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+/* === Back Link === */
+.back-link {
+  display: inline-block;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+.back-link:hover {
+  color: var(--accent);
+}
+
+/* === Instructions === */
+.instructions {
+  background: var(--card-bg);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* === Responsive === */
+@media (max-width: 480px) {
+  .container { padding: 12px; }
+  h1 { font-size: 1.3rem; }
+}

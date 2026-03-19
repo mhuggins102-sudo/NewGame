@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Numawari</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  :root { --accent: #ffd93d; --cols: 5; --rows: 4; }
+  .btn--primary { background: var(--accent); border-color: var(--accent); color: #1a1a2e; }
+  .btn--primary:hover { background: #e6c235; }
+  .cell { transition: background 0.1s, border 0.1s; }
+  .cell.preview { background: rgba(255,217,61,0.15); outline: 2px dashed var(--accent); outline-offset: -2px; }
+  .cell.start-cell { box-shadow: inset 0 0 0 2px var(--accent); }
+  .preview-info { position: fixed; pointer-events: none; background: var(--card-bg);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 4px 10px;
+    font-size: 0.8rem; color: var(--accent); z-index: 100; display: none; }
+  .cell.region-cell { border-color: transparent; }
+  h1 { color: var(--accent); }
+  .back-link:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="index.html" class="back-link">&#8592; Back to puzzles</a>
+  <h1>Numawari</h1>
+  <p class="subtitle">Perimeter-based region division puzzle</p>
+  <div class="instructions">
+    <strong>Rules:</strong> Divide the grid into rectangles. Each rectangle must contain exactly one
+    number, and that number must equal the rectangle's perimeter (2 &times; (width + height)).<br>
+    <strong>Controls:</strong> Click a cell to select the first corner, then click another cell to
+    define the opposite corner. Right-click or click a colored region to remove it.
+  </div>
+  <div id="grid" class="puzzle-grid"></div>
+  <div class="controls">
+    <button class="btn btn--primary" onclick="checkSolution()">Check</button>
+    <button class="btn" onclick="resetRegions()">Reset</button>
+  </div>
+  <div id="status" class="status-bar"></div>
+  <div id="preview-info" class="preview-info"></div>
+</div>
+<script>
+const COLS = 5, ROWS = 4;
+const numbers = {};
+[[0,1,8],[0,4,8],[1,0,6],[1,2,6],[2,2,10],[3,0,4],[3,4,6]].forEach(([r,c,n]) => numbers[r+','+c] = n);
+
+const PALETTE = ['#e6435088','#4ea4d088','#8bc34a88','#ff980088','#ab47bc88','#26a69a88','#ef535088','#42a5f588'];
+let regions = [];
+let startCell = null;
+let cells = [];
+
+function init() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  cells = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+      const key = r + ',' + c;
+      if (numbers[key]) {
+        cell.textContent = numbers[key];
+        cell.classList.add('cell--given');
+      }
+      cell.addEventListener('click', () => handleClick(r, c));
+      cell.addEventListener('contextmenu', (e) => { e.preventDefault(); handleRightClick(r, c); });
+      cell.addEventListener('mouseenter', () => handleHover(r, c));
+      grid.appendChild(cell);
+      cells.push(cell);
+    }
+  }
+  document.addEventListener('mousemove', movePreviewInfo);
+}
+
+function getCell(r, c) { return cells[r * COLS + c]; }
+
+function getRegionAt(r, c) {
+  return regions.find(reg => r >= reg.r1 && r <= reg.r2 && c >= reg.c1 && c <= reg.c2);
+}
+
+function handleClick(r, c) {
+  clearStatus();
+  const existing = getRegionAt(r, c);
+  if (existing) { removeRegion(existing); return; }
+  if (!startCell) {
+    startCell = { r, c };
+    getCell(r, c).classList.add('start-cell');
+  } else {
+    const r1 = Math.min(startCell.r, r), r2 = Math.max(startCell.r, r);
+    const c1 = Math.min(startCell.c, c), c2 = Math.max(startCell.c, c);
+    clearSelection();
+    tryPlaceRegion(r1, c1, r2, c2);
+  }
+}
+
+function handleRightClick(r, c) {
+  clearStatus();
+  if (startCell) { clearSelection(); return; }
+  const existing = getRegionAt(r, c);
+  if (existing) removeRegion(existing);
+}
+
+function handleHover(r, c) {
+  clearPreview();
+  if (!startCell) return;
+  const r1 = Math.min(startCell.r, r), r2 = Math.max(startCell.r, r);
+  const c1 = Math.min(startCell.c, c), c2 = Math.max(startCell.c, c);
+  const w = c2 - c1 + 1, h = r2 - r1 + 1;
+  const perim = 2 * (w + h);
+  for (let rr = r1; rr <= r2; rr++)
+    for (let cc = c1; cc <= c2; cc++)
+      getCell(rr, cc).classList.add('preview');
+  const info = document.getElementById('preview-info');
+  info.textContent = `${w}\u00d7${h} \u2014 Perimeter: ${perim}`;
+  info.style.display = 'block';
+}
+
+function movePreviewInfo(e) {
+  const info = document.getElementById('preview-info');
+  if (info.style.display === 'block') {
+    info.style.left = (e.clientX + 14) + 'px';
+    info.style.top = (e.clientY + 14) + 'px';
+  }
+}
+
+function clearPreview() {
+  cells.forEach(c => c.classList.remove('preview'));
+  document.getElementById('preview-info').style.display = 'none';
+}
+
+function clearSelection() {
+  if (startCell) getCell(startCell.r, startCell.c).classList.remove('start-cell');
+  startCell = null;
+  clearPreview();
+}
+
+function tryPlaceRegion(r1, c1, r2, c2) {
+  // Check overlap with existing regions
+  for (let rr = r1; rr <= r2; rr++)
+    for (let cc = c1; cc <= c2; cc++)
+      if (getRegionAt(rr, cc)) { showStatus('Region overlaps an existing one.', false); return; }
+
+  // Count numbers in region
+  let numCount = 0, numVal = 0;
+  for (let rr = r1; rr <= r2; rr++)
+    for (let cc = c1; cc <= c2; cc++) {
+      const key = rr + ',' + cc;
+      if (numbers[key]) { numCount++; numVal = numbers[key]; }
+    }
+
+  const w = c2 - c1 + 1, h = r2 - r1 + 1;
+  const perim = 2 * (w + h);
+
+  if (numCount !== 1) { showStatus('Region must contain exactly one number.', false); return; }
+  if (numVal !== perim) { showStatus(`Number ${numVal} does not match perimeter ${perim}.`, false); return; }
+
+  const color = PALETTE[regions.length % PALETTE.length];
+  regions.push({ r1, c1, r2, c2, color });
+  renderRegions();
+}
+
+function removeRegion(reg) {
+  regions = regions.filter(r => r !== reg);
+  renderRegions();
+}
+
+function renderRegions() {
+  // Reset all cells
+  cells.forEach(cell => {
+    cell.style.background = '';
+    cell.style.borderTop = '';
+    cell.style.borderBottom = '';
+    cell.style.borderLeft = '';
+    cell.style.borderRight = '';
+    cell.classList.remove('region-cell');
+  });
+  // Apply regions
+  regions.forEach((reg, idx) => {
+    const color = PALETTE[idx % PALETTE.length];
+    reg.color = color;
+    for (let r = reg.r1; r <= reg.r2; r++) {
+      for (let c = reg.c1; c <= reg.c2; c++) {
+        const cell = getCell(r, c);
+        cell.style.background = color;
+        cell.classList.add('region-cell');
+        const bw = '3px solid ' + color.slice(0, 7);
+        if (r === reg.r1) cell.style.borderTop = bw;
+        if (r === reg.r2) cell.style.borderBottom = bw;
+        if (c === reg.c1) cell.style.borderLeft = bw;
+        if (c === reg.c2) cell.style.borderRight = bw;
+      }
+    }
+  });
+}
+
+function checkSolution() {
+  // Check all cells covered
+  const covered = new Set();
+  for (const reg of regions) {
+    for (let r = reg.r1; r <= reg.r2; r++)
+      for (let c = reg.c1; c <= reg.c2; c++)
+        covered.add(r + ',' + c);
+  }
+  if (covered.size < ROWS * COLS) {
+    showStatus(`Not all cells are covered (${covered.size}/${ROWS * COLS}).`, false); return;
+  }
+  // Check each region validity
+  for (const reg of regions) {
+    let numCount = 0, numVal = 0;
+    for (let r = reg.r1; r <= reg.r2; r++)
+      for (let c = reg.c1; c <= reg.c2; c++) {
+        const key = r + ',' + c;
+        if (numbers[key]) { numCount++; numVal = numbers[key]; }
+      }
+    const w = reg.c2 - reg.c1 + 1, h = reg.r2 - reg.r1 + 1;
+    if (numCount !== 1 || numVal !== 2 * (w + h)) {
+      showStatus('A region is invalid. Check numbers and perimeters.', false); return;
+    }
+  }
+  showStatus('Congratulations! Puzzle solved!', true);
+}
+
+function resetRegions() {
+  regions = [];
+  clearSelection();
+  clearStatus();
+  renderRegions();
+}
+
+function showStatus(msg, success) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status-bar ' + (success ? 'status-bar--success' : 'status-bar--error');
+}
+
+function clearStatus() {
+  const el = document.getElementById('status');
+  el.className = 'status-bar';
+  el.textContent = '';
+}
+
+init();
+</script>
+</body>
+</html>
